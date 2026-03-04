@@ -440,3 +440,79 @@ class TestIntegrationOptionsWrite:
                 "after": True,
             }
         ]
+
+    @pytest.mark.asyncio
+    async def test_set_integration_options_accepts_tpi_step_keys(self, mock_client):
+        """VT tpi-step adapters should accept supported keys."""
+        registered_tools = _capture_tools(mock_client)
+
+        mock_client.start_options_flow.side_effect = [
+            {
+                "type": "menu",
+                "flow_id": "flow-1",
+                "step_id": "menu",
+                "menu_options": ["tpi", "finalize"],
+            },
+            {
+                "type": "menu",
+                "flow_id": "flow-2",
+                "step_id": "menu",
+                "menu_options": ["tpi", "finalize"],
+            },
+        ]
+        mock_client.submit_options_flow_step.side_effect = [
+            {
+                "type": "form",
+                "flow_id": "flow-1",
+                "step_id": "tpi",
+                "data_schema": [
+                    {
+                        "name": "tpi_coef_int",
+                        "description": {"suggested_value": 0.6},
+                    },
+                    {
+                        "name": "minimal_activation_delay",
+                        "description": {"suggested_value": 10},
+                    },
+                ],
+            },
+            {
+                "type": "menu",
+                "flow_id": "flow-1",
+                "step_id": "menu",
+                "menu_options": ["tpi", "finalize"],
+            },
+            {"type": "create_entry", "flow_id": "flow-1", "step_id": "finalize"},
+            {
+                "type": "form",
+                "flow_id": "flow-2",
+                "step_id": "tpi",
+                "data_schema": [
+                    {
+                        "name": "tpi_coef_int",
+                        "description": {"suggested_value": 0.8},
+                    },
+                    {
+                        "name": "minimal_activation_delay",
+                        "description": {"suggested_value": 10},
+                    },
+                ],
+            },
+        ]
+
+        result = await registered_tools["ha_set_integration_options"](
+            entry_id="entry-1",
+            step="tpi",
+            options_patch={"tpi_coef_int": 0.8},
+        )
+
+        assert result["success"] is True
+        assert result["applied"] is True
+        assert result["verified"] is True
+        assert result["diff"] == [
+            {
+                "key": "tpi_coef_int",
+                "before": 0.6,
+                "after": 0.8,
+            }
+        ]
