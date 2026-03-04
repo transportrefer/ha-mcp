@@ -197,6 +197,28 @@ async def _open_options_step(client: Any, entry_id: str, step: str) -> dict[str,
     """Start an options flow and navigate to the requested step."""
     flow = await client.start_options_flow(entry_id)
     if flow.get("type") == "menu":
+        available_steps = [
+            option
+            for option in flow.get("menu_options", [])
+            if isinstance(option, str) and option
+        ]
+        if step not in available_steps:
+            raise_tool_error(
+                create_error_response(
+                    ErrorCode.CONFIG_VALIDATION_FAILED,
+                    f"Options step '{step}' is not available for config entry {entry_id}.",
+                    context={
+                        "entry_id": entry_id,
+                        "requested_step": step,
+                        "available_steps": available_steps,
+                        "flow_type": flow.get("type"),
+                    },
+                    suggestions=[
+                        "Use ha_get_integration_options(..., include_options_flow=True) to inspect the current menu options",
+                        "Choose a step that is exposed by this specific config entry",
+                    ],
+                )
+            )
         flow = await client.submit_options_flow_step(
             flow["flow_id"], {"next_step_id": step}
         )
