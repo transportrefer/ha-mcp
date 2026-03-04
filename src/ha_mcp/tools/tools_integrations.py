@@ -6,6 +6,7 @@ integrations (config entries) via the REST and WebSocket APIs.
 """
 
 import logging
+from copy import deepcopy
 from typing import Annotated, Any
 
 from fastmcp.exceptions import ToolError
@@ -16,6 +17,25 @@ from .helpers import exception_to_structured_error, log_tool_usage, raise_tool_e
 from .util_helpers import coerce_bool_param
 
 logger = logging.getLogger(__name__)
+
+
+INTEGRATION_OPTION_ADAPTERS: dict[str, dict[str, dict[str, Any]]] = {
+    "versatile_thermostat": {
+        "presence": {
+            "allowed_keys": {
+                "presence_sensor_entity_id",
+                "use_presence_central_config",
+            },
+            "verification_method": "flow_suggested",
+        },
+        "type": {
+            "allowed_keys": {
+                "underlying_entity_ids",
+            },
+            "verification_method": "flow_suggested",
+        },
+    }
+}
 
 
 def _format_options_flow_result(result: dict[str, Any]) -> dict[str, Any]:
@@ -36,6 +56,161 @@ def _format_options_flow_result(result: dict[str, Any]) -> dict[str, Any]:
             "description_placeholders", {}
         )
     return formatted
+
+
+def _extract_schema_values(flow_result: dict[str, Any]) -> dict[str, Any]:
+    """Extract the current/suggested/default values from a flow schema."""
+    values: dict[str, Any] = {}
+    for field in flow_result.get("data_schema", []):
+        if not isinstance(field, dict):
+            continue
+        name = field.get("name")
+        if not isinstance(name, str) or not name:
+            continue
+        if "suggested_value" in field:
+            values[name] = field.get("suggested_value")
+        elif isinstance(field.get("description"), dict) and "suggested_value" in field["description"]:
+            values[name] = field["description"].get("suggested_value")
+        elif "default" in field:
+            values[name] = field.get("default")
+    return values
+
+
+def _build_diff(before: dict[str, Any], after: dict[str, Any]) -> list[dict[str, Any]]:
+    """Build a stable per-key diff between two dictionaries."""
+    diff: list[dict[str, Any]] = []
+    for key in sorted(set(before) | set(after)):
+        before_value = before.get(key)
+        after_value = after.get(key)
+        if before_value != after_value:
+            diff.append({"key": key, "before": before_value, "after": after_value})
+    return diff
+
+
+def _normalize_options_patch(
+    options_patch: dict[str, Any],
+) -> dict[str, Any]:
+    """Return a validated shallow copy of options_patch."""
+    if not isinstance(options_patch, dict) or not options_patch:
+        raise_tool_error(
+            create_error_response(
+                ErrorCode.VALIDATION_INVALID_PARAMETER,
+                "options_patch must be a non-empty object.",
+                context={"parameter": "options_patch"},
+            )
+        )
+    return deepcopy(options_patch)
+
+
+def _get_adapter(domain: str, step: str) -> dict[str, Any]:
+    """Return the adapter config for a supported integration/step pair."""
+    domain_adapters = INTEGRATION_OPTION_ADAPTERS.get(domain, {})
+    adapter = domain_adapters.get(step)
+    if adapter is None:
+        raise_tool_error(
+            create_error_response(
+                ErrorCode.VALIDATION_INVALID_PARAMETER,
+                f"Unsupported integration options step: {domain}.{step}",
+                context={"domain": domain, "step": step},
+                suggestions=[
+                    "Use ha_get_integration_options(..., include_options_flow=True) to inspect the available flow",
+                    "Limit writes to currently supported integration/step combinations",
+                ],
+            )
+        )
+    return adapter
+
+
+async def _open_options_step(client: Any, entry_id: str, step: str) -> dict[str, Any]:
+    """Start an options flow and navigate to the requested step."""
+    flow = await client.start_options_flow(entry_id)
+    if flow.get("type") == "menu":
+        flow = await client.submit_options_flow_step(
+            flow["flow_id"], {"next_step_id": step}
+        )
+
+    if flow.get("step_id") != step:
+        raise_tool_error(
+            create_error_response(
+                ErrorCode.CONFIG_VALIDATION_FAILED,
+                f"Options flow did not open the requested step '{step}'.",
+                context={
+                    "entry_id": entry_id,
+                    "requested_step": step,
+                    "actual_step": flow.get("step_id"),
+                    "flow_type": flow.get("type"),
+                },
+            )
+        )
+    return flow
+
+
+def _validate_patch_keys(
+    patch: dict[str, Any],
+    adapter: dict[str, Any],
+    schema_values: dict[str, Any],
+    *,
+    domain: str,
+    step: str,
+    strict_keys: bool,
+) -> None:
+    """Validate patch keys against adapter policy and current flow schema."""
+    adapter_keys = set(adapter.get("allowed_keys", set()))
+    schema_keys = set(schema_values)
+    unknown_keys = sorted(key for key in patch if key not in adapter_keys)
+    unavailable_keys = sorted(key for key in patch if key not in schema_keys)
+
+    if unknown_keys and strict_keys:
+        raise_tool_error(
+            create_error_response(
+                ErrorCode.VALIDATION_INVALID_PARAMETER,
+                f"Unsupported option key(s) for {domain}.{step}: {', '.join(unknown_keys)}",
+                context={
+                    "domain": domain,
+                    "step": step,
+                    "unsupported_keys": unknown_keys,
+                },
+            )
+        )
+    if unavailable_keys:
+        raise_tool_error(
+            create_error_response(
+                ErrorCode.CONFIG_VALIDATION_FAILED,
+                f"Requested option key(s) are not available on the current {domain}.{step} flow step: {', '.join(unavailable_keys)}",
+                context={
+                    "domain": domain,
+                    "step": step,
+                    "available_keys": sorted(schema_keys),
+                    "requested_keys": sorted(patch),
+                },
+            )
+        )
+
+
+async def _verify_step_values(
+    client: Any,
+    entry_id: str,
+    step: str,
+    expected: dict[str, Any],
+) -> tuple[dict[str, Any], bool]:
+    """Re-open the step and compare readback values to expected ones."""
+    verification_flow = await _open_options_step(client, entry_id, step)
+    readback = _extract_schema_values(verification_flow)
+    verified = all(readback.get(key) == value for key, value in expected.items())
+    return readback, verified
+
+
+async def _finalize_options_flow(
+    client: Any, flow_result: dict[str, Any]
+) -> dict[str, Any]:
+    """Finalize an options flow when HA returns to the menu after a step submit."""
+    if flow_result.get("type") == "menu" and "finalize" in flow_result.get(
+        "menu_options", []
+    ):
+        flow_result = await client.submit_options_flow_step(
+            flow_result["flow_id"], {"next_step_id": "finalize"}
+        )
+    return flow_result
 
 
 def register_integration_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
@@ -240,6 +415,7 @@ def register_integration_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
     @mcp.tool(
         annotations={
             "idempotentHint": True,
+            "readOnlyHint": True,
             "tags": ["integration"],
             "title": "Get Integration Options",
         }
@@ -299,6 +475,173 @@ def register_integration_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
                 suggestions=[
                     "Use ha_get_integration() to confirm the config entry exists",
                     "Check whether this integration exposes an options flow in Home Assistant",
+                ],
+            )
+
+    @mcp.tool(
+        annotations={
+            "destructiveHint": True,
+            "idempotentHint": True,
+            "tags": ["integration"],
+            "title": "Set Integration Options",
+        }
+    )
+    @log_tool_usage
+    async def ha_set_integration_options(
+        entry_id: Annotated[str, Field(description="Config entry ID to update.")],
+        step: Annotated[
+            str,
+            Field(
+                description="Options-flow step to update, for example 'presence' or 'type'."
+            ),
+        ],
+        options_patch: Annotated[
+            dict[str, Any],
+            Field(
+                description="Partial object containing the fields to update on the selected step."
+            ),
+        ],
+        strict_keys: Annotated[
+            bool | str,
+            Field(
+                description="When true, reject keys not explicitly supported for the integration/step adapter.",
+                default=True,
+            ),
+        ] = True,
+        verify: Annotated[
+            bool | str,
+            Field(
+                description="When true, re-open the flow step and compare suggested values after applying the patch.",
+                default=True,
+            ),
+        ] = True,
+    ) -> dict[str, Any]:
+        """
+        Update integration settings through Home Assistant's config-entry options flow.
+
+        This is a generic write tool with integration-step adapters for safe payload
+        shaping and verification. Use ha_get_integration_options() first to inspect
+        the flow before applying changes.
+        """
+        try:
+            strict_keys_bool = coerce_bool_param(
+                strict_keys, "strict_keys", default=True
+            )
+            verify_bool = coerce_bool_param(verify, "verify", default=True)
+            patch = _normalize_options_patch(options_patch)
+
+            entry = await client.get_config_entry(entry_id)
+            domain = entry.get("domain")
+            title = entry.get("title")
+            if not isinstance(domain, str) or not domain:
+                raise_tool_error(
+                    create_error_response(
+                        ErrorCode.CONFIG_NOT_FOUND,
+                        f"Config entry {entry_id} does not expose a valid integration domain.",
+                        context={"entry_id": entry_id},
+                    )
+                )
+
+            adapter = _get_adapter(domain, step)
+            step_flow = await _open_options_step(client, entry_id, step)
+            before = _extract_schema_values(step_flow)
+            _validate_patch_keys(
+                patch,
+                adapter,
+                before,
+                domain=domain,
+                step=step,
+                strict_keys=strict_keys_bool,
+            )
+
+            payload = deepcopy(before)
+            payload.update(patch)
+            diff = _build_diff(before, payload)
+            if not diff:
+                return {
+                    "success": True,
+                    "entry_id": entry_id,
+                    "domain": domain,
+                    "title": title,
+                    "step": step,
+                    "applied": False,
+                    "before": before,
+                    "after": before,
+                    "diff": [],
+                    "verified": True,
+                    "verification_method": "none",
+                    "warnings": [],
+                }
+
+            submit_result = await client.submit_options_flow_step(
+                step_flow["flow_id"], payload
+            )
+            if submit_result.get("type") == "form":
+                raise_tool_error(
+                    create_error_response(
+                        ErrorCode.CONFIG_VALIDATION_FAILED,
+                        f"Home Assistant rejected the options update for {domain}.{step}.",
+                        context={
+                            "entry_id": entry_id,
+                            "domain": domain,
+                            "step": step,
+                            "errors": submit_result.get("errors", {}),
+                        },
+                        suggestions=[
+                            "Review the flow errors in the response context",
+                            "Call ha_get_integration_options(..., include_options_flow=True) to inspect the current step schema",
+                        ],
+                    )
+                )
+            submit_result = await _finalize_options_flow(client, submit_result)
+
+            warnings: list[str] = []
+            after = deepcopy(payload)
+            verified = False
+            verification_method = "none"
+
+            if verify_bool:
+                verification_method = adapter.get("verification_method", "none")
+                if verification_method == "flow_suggested":
+                    after, verified = await _verify_step_values(
+                        client, entry_id, step, patch
+                    )
+                    if not verified:
+                        warnings.append(
+                            "Options flow update completed, but the follow-up readback did not fully match the requested values."
+                        )
+                else:
+                    warnings.append(
+                        "No verification strategy is implemented for this integration-step adapter."
+                    )
+            else:
+                warnings.append("Verification skipped at caller request.")
+
+            return {
+                "success": True,
+                "entry_id": entry_id,
+                "domain": domain,
+                "title": title,
+                "step": step,
+                "applied": True,
+                "before": before,
+                "after": after,
+                "diff": diff,
+                "verified": verified,
+                "verification_method": verification_method,
+                "warnings": warnings,
+            }
+
+        except ToolError:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to set integration options: {e}")
+            exception_to_structured_error(
+                e,
+                context={"entry_id": entry_id, "step": step},
+                suggestions=[
+                    "Use ha_get_integration_options(..., include_options_flow=True) to inspect the target step",
+                    "Confirm the integration/step pair is currently supported by ha_set_integration_options",
                 ],
             )
 
