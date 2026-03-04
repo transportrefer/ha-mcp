@@ -50,6 +50,17 @@ INTEGRATION_OPTION_ADAPTERS: dict[str, dict[str, dict[str, Any]]] = {
             },
             "verification_method": "flow_suggested",
         },
+        "tpi": {
+            "allowed_keys": {
+                "tpi_coef_int",
+                "tpi_coef_ext",
+                "minimal_activation_delay",
+                "minimal_deactivation_delay",
+                "tpi_threshold_low",
+                "tpi_threshold_high",
+            },
+            "verification_method": "flow_suggested",
+        },
         "presets": {
             "allowed_keys": {
                 "use_presets_central_config",
