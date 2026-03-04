@@ -21,6 +21,41 @@ logger = logging.getLogger(__name__)
 
 INTEGRATION_OPTION_ADAPTERS: dict[str, dict[str, dict[str, Any]]] = {
     "versatile_thermostat": {
+        "main": {
+            "allowed_keys": {
+                "external_temperature_sensor_entity_id",
+                "temp_min",
+                "temp_max",
+                "step_temperature",
+                "name",
+                "temperature_sensor_entity_id",
+                "last_seen_temperature_sensor_entity_id",
+                "cycle_min",
+                "device_power",
+                "use_main_central_config",
+                "use_central_mode",
+                "used_by_controls_central_boiler",
+            },
+            "verification_method": "flow_suggested",
+        },
+        "features": {
+            "allowed_keys": {
+                "use_window_feature",
+                "use_motion_feature",
+                "use_power_feature",
+                "use_presence_feature",
+                "use_central_boiler_feature",
+                "use_heating_failure_detection_feature",
+                "use_auto_start_stop_feature",
+            },
+            "verification_method": "flow_suggested",
+        },
+        "presets": {
+            "allowed_keys": {
+                "use_presets_central_config",
+            },
+            "verification_method": "flow_suggested",
+        },
         "presence": {
             "allowed_keys": {
                 "presence_sensor_entity_id",
@@ -28,9 +63,34 @@ INTEGRATION_OPTION_ADAPTERS: dict[str, dict[str, dict[str, Any]]] = {
             },
             "verification_method": "flow_suggested",
         },
+        "advanced": {
+            "allowed_keys": {
+                "safety_delay_min",
+                "safety_min_on_percent",
+                "safety_default_on_percent",
+                "use_advanced_central_config",
+            },
+            "verification_method": "flow_suggested",
+        },
+        "lock": {
+            "allowed_keys": {
+                "lock_code",
+                "lock_users",
+                "lock_automations",
+                "use_lock_central_config",
+            },
+            "verification_method": "flow_suggested",
+        },
         "type": {
             "allowed_keys": {
                 "underlying_entity_ids",
+                "ac_mode",
+                "sync_device_internal_temp",
+                "auto_regulation_mode",
+                "auto_regulation_dtemp",
+                "auto_regulation_periode_min",
+                "auto_fan_mode",
+                "auto_regulation_use_device_temp",
             },
             "verification_method": "flow_suggested",
         },
@@ -74,6 +134,18 @@ def _extract_schema_values(flow_result: dict[str, Any]) -> dict[str, Any]:
         elif "default" in field:
             values[name] = field.get("default")
     return values
+
+
+def _extract_schema_field_names(flow_result: dict[str, Any]) -> set[str]:
+    """Extract all field names from a flow schema."""
+    names: set[str] = set()
+    for field in flow_result.get("data_schema", []):
+        if not isinstance(field, dict):
+            continue
+        name = field.get("name")
+        if isinstance(name, str) and name:
+            names.add(name)
+    return names
 
 
 def _build_diff(before: dict[str, Any], after: dict[str, Any]) -> list[dict[str, Any]]:
@@ -148,7 +220,7 @@ async def _open_options_step(client: Any, entry_id: str, step: str) -> dict[str,
 def _validate_patch_keys(
     patch: dict[str, Any],
     adapter: dict[str, Any],
-    schema_values: dict[str, Any],
+    schema_field_names: set[str],
     *,
     domain: str,
     step: str,
@@ -156,9 +228,8 @@ def _validate_patch_keys(
 ) -> None:
     """Validate patch keys against adapter policy and current flow schema."""
     adapter_keys = set(adapter.get("allowed_keys", set()))
-    schema_keys = set(schema_values)
     unknown_keys = sorted(key for key in patch if key not in adapter_keys)
-    unavailable_keys = sorted(key for key in patch if key not in schema_keys)
+    unavailable_keys = sorted(key for key in patch if key not in schema_field_names)
 
     if unknown_keys and strict_keys:
         raise_tool_error(
@@ -180,7 +251,7 @@ def _validate_patch_keys(
                 context={
                     "domain": domain,
                     "step": step,
-                    "available_keys": sorted(schema_keys),
+                    "available_keys": sorted(schema_field_names),
                     "requested_keys": sorted(patch),
                 },
             )
@@ -545,10 +616,11 @@ def register_integration_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
             adapter = _get_adapter(domain, step)
             step_flow = await _open_options_step(client, entry_id, step)
             before = _extract_schema_values(step_flow)
+            schema_field_names = _extract_schema_field_names(step_flow)
             _validate_patch_keys(
                 patch,
                 adapter,
-                before,
+                schema_field_names,
                 domain=domain,
                 step=step,
                 strict_keys=strict_keys_bool,
