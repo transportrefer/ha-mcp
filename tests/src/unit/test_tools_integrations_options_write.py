@@ -51,8 +51,18 @@ class TestIntegrationOptionsWrite:
         registered_tools = _capture_tools(mock_client)
 
         mock_client.start_options_flow.side_effect = [
-            {"type": "menu", "flow_id": "flow-1", "step_id": "menu"},
-            {"type": "menu", "flow_id": "flow-2", "step_id": "menu"},
+            {
+                "type": "menu",
+                "flow_id": "flow-1",
+                "step_id": "menu",
+                "menu_options": ["type", "finalize"],
+            },
+            {
+                "type": "menu",
+                "flow_id": "flow-2",
+                "step_id": "menu",
+                "menu_options": ["type", "finalize"],
+            },
         ]
         mock_client.submit_options_flow_step.side_effect = [
             {
@@ -126,6 +136,7 @@ class TestIntegrationOptionsWrite:
             "type": "menu",
             "flow_id": "flow-1",
             "step_id": "menu",
+            "menu_options": ["type", "finalize"],
         }
         mock_client.submit_options_flow_step.return_value = {
             "type": "form",
@@ -175,6 +186,7 @@ class TestIntegrationOptionsWrite:
             "type": "menu",
             "flow_id": "flow-1",
             "step_id": "menu",
+            "menu_options": ["type", "finalize"],
         }
         mock_client.submit_options_flow_step.return_value = {
             "type": "form",
@@ -201,6 +213,33 @@ class TestIntegrationOptionsWrite:
         assert "Unsupported option key" in error_data["error"]["message"]
 
     @pytest.mark.asyncio
+    async def test_set_integration_options_rejects_step_unavailable_for_entry(
+        self, mock_client
+    ):
+        """Entry-specific menu availability should be enforced before submission."""
+        registered_tools = _capture_tools(mock_client)
+
+        mock_client.start_options_flow.return_value = {
+            "type": "menu",
+            "flow_id": "flow-1",
+            "step_id": "menu",
+            "menu_options": ["main", "features", "presence"],
+        }
+
+        with pytest.raises(ToolError) as exc_info:
+            await registered_tools["ha_set_integration_options"](
+                entry_id="entry-1",
+                step="type",
+                options_patch={"underlying_entity_ids": ["climate.foo"]},
+            )
+
+        error_data = json.loads(str(exc_info.value))
+        assert error_data["success"] is False
+        assert error_data["error"]["code"] == "CONFIG_VALIDATION_FAILED"
+        assert "not available for config entry" in error_data["error"]["message"]
+        assert error_data["available_steps"] == ["main", "features", "presence"]
+
+    @pytest.mark.asyncio
     async def test_set_integration_options_surfaces_ha_form_errors(self, mock_client):
         """HA form validation errors should become MCP validation errors."""
         registered_tools = _capture_tools(mock_client)
@@ -209,6 +248,7 @@ class TestIntegrationOptionsWrite:
             "type": "menu",
             "flow_id": "flow-1",
             "step_id": "menu",
+            "menu_options": ["type", "finalize"],
         }
         mock_client.submit_options_flow_step.side_effect = [
             {
@@ -256,8 +296,18 @@ class TestIntegrationOptionsWrite:
         registered_tools = _capture_tools(mock_client)
 
         mock_client.start_options_flow.side_effect = [
-            {"type": "menu", "flow_id": "flow-1", "step_id": "menu"},
-            {"type": "menu", "flow_id": "flow-2", "step_id": "menu"},
+            {
+                "type": "menu",
+                "flow_id": "flow-1",
+                "step_id": "menu",
+                "menu_options": ["main", "finalize"],
+            },
+            {
+                "type": "menu",
+                "flow_id": "flow-2",
+                "step_id": "menu",
+                "menu_options": ["main", "finalize"],
+            },
         ]
         mock_client.submit_options_flow_step.side_effect = [
             {
@@ -321,8 +371,18 @@ class TestIntegrationOptionsWrite:
         registered_tools = _capture_tools(mock_client)
 
         mock_client.start_options_flow.side_effect = [
-            {"type": "menu", "flow_id": "flow-1", "step_id": "menu"},
-            {"type": "menu", "flow_id": "flow-2", "step_id": "menu"},
+            {
+                "type": "menu",
+                "flow_id": "flow-1",
+                "step_id": "menu",
+                "menu_options": ["features", "finalize"],
+            },
+            {
+                "type": "menu",
+                "flow_id": "flow-2",
+                "step_id": "menu",
+                "menu_options": ["features", "finalize"],
+            },
         ]
         mock_client.submit_options_flow_step.side_effect = [
             {
