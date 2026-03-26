@@ -168,7 +168,7 @@ class TestIntegrationOptionsWrite:
         with pytest.raises(ToolError) as exc_info:
             await registered_tools["ha_set_integration_options"](
                 entry_id="entry-1",
-                step="window",
+                step="windowx",
                 options_patch={"use_window_central_config": True},
             )
 
@@ -514,5 +514,83 @@ class TestIntegrationOptionsWrite:
                 "key": "tpi_coef_int",
                 "before": 0.6,
                 "after": 0.8,
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_set_integration_options_accepts_window_step_keys(self, mock_client):
+        """VT window-step adapters should accept supported keys."""
+        registered_tools = _capture_tools(mock_client)
+
+        mock_client.start_options_flow.side_effect = [
+            {
+                "type": "menu",
+                "flow_id": "flow-1",
+                "step_id": "menu",
+                "menu_options": ["window", "finalize"],
+            },
+            {
+                "type": "menu",
+                "flow_id": "flow-2",
+                "step_id": "menu",
+                "menu_options": ["window", "finalize"],
+            },
+        ]
+        mock_client.submit_options_flow_step.side_effect = [
+            {
+                "type": "form",
+                "flow_id": "flow-1",
+                "step_id": "window",
+                "data_schema": [
+                    {
+                        "name": "window_sensor_entity_id",
+                        "description": {"suggested_value": None},
+                    },
+                    {
+                        "name": "window_delay",
+                        "description": {"suggested_value": 30},
+                    },
+                ],
+            },
+            {
+                "type": "menu",
+                "flow_id": "flow-1",
+                "step_id": "menu",
+                "menu_options": ["window", "finalize"],
+            },
+            {"type": "create_entry", "flow_id": "flow-1", "step_id": "finalize"},
+            {
+                "type": "form",
+                "flow_id": "flow-2",
+                "step_id": "window",
+                "data_schema": [
+                    {
+                        "name": "window_sensor_entity_id",
+                        "description": {
+                            "suggested_value": "binary_sensor.office_window_contact"
+                        },
+                    },
+                    {
+                        "name": "window_delay",
+                        "description": {"suggested_value": 30},
+                    },
+                ],
+            },
+        ]
+
+        result = await registered_tools["ha_set_integration_options"](
+            entry_id="entry-1",
+            step="window",
+            options_patch={"window_sensor_entity_id": "binary_sensor.office_window_contact"},
+        )
+
+        assert result["success"] is True
+        assert result["applied"] is True
+        assert result["verified"] is True
+        assert result["diff"] == [
+            {
+                "key": "window_sensor_entity_id",
+                "before": None,
+                "after": "binary_sensor.office_window_contact",
             }
         ]

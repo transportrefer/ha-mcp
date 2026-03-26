@@ -67,6 +67,19 @@ INTEGRATION_OPTION_ADAPTERS: dict[str, dict[str, dict[str, Any]]] = {
             },
             "verification_method": "flow_suggested",
         },
+        "window": {
+            "allowed_keys": {
+                "window_sensor_entity_id",
+                "window_delay",
+                "window_off_delay",
+                "window_action",
+                "window_auto_open_threshold",
+                "window_auto_close_threshold",
+                "window_auto_max_duration",
+                "use_window_central_config",
+            },
+            "verification_method": "flow_suggested",
+        },
         "presence": {
             "allowed_keys": {
                 "presence_sensor_entity_id",
