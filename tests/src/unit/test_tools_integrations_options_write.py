@@ -518,6 +518,154 @@ class TestIntegrationOptionsWrite:
         ]
 
     @pytest.mark.asyncio
+    async def test_set_integration_options_accepts_tpi_auto_regulation_keys(
+        self, mock_client
+    ):
+        """VT tpi-step should accept auto_regulation_dpercent/period keys."""
+        registered_tools = _capture_tools(mock_client)
+
+        mock_client.start_options_flow.side_effect = [
+            {
+                "type": "menu",
+                "flow_id": "flow-1",
+                "step_id": "menu",
+                "menu_options": ["tpi", "finalize"],
+            },
+            {
+                "type": "menu",
+                "flow_id": "flow-2",
+                "step_id": "menu",
+                "menu_options": ["tpi", "finalize"],
+            },
+        ]
+        mock_client.submit_options_flow_step.side_effect = [
+            {
+                "type": "form",
+                "flow_id": "flow-1",
+                "step_id": "tpi",
+                "data_schema": [
+                    {
+                        "name": "auto_regulation_dpercent",
+                        "description": {"suggested_value": 0.5},
+                    },
+                    {
+                        "name": "auto_regulation_period_min",
+                        "description": {"suggested_value": 5},
+                    },
+                ],
+            },
+            {
+                "type": "menu",
+                "flow_id": "flow-1",
+                "step_id": "menu",
+                "menu_options": ["tpi", "finalize"],
+            },
+            {"type": "create_entry", "flow_id": "flow-1", "step_id": "finalize"},
+            {
+                "type": "form",
+                "flow_id": "flow-2",
+                "step_id": "tpi",
+                "data_schema": [
+                    {
+                        "name": "auto_regulation_dpercent",
+                        "description": {"suggested_value": 0.5},
+                    },
+                    {
+                        "name": "auto_regulation_period_min",
+                        "description": {"suggested_value": 6},
+                    },
+                ],
+            },
+        ]
+
+        result = await registered_tools["ha_set_integration_options"](
+            entry_id="entry-1",
+            step="tpi",
+            options_patch={"auto_regulation_period_min": 6},
+        )
+
+        assert result["success"] is True
+        assert result["applied"] is True
+        assert result["verified"] is True
+        assert result["diff"] == [
+            {
+                "key": "auto_regulation_period_min",
+                "before": 5,
+                "after": 6,
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_set_integration_options_remaps_vt_period_typo_alias(
+        self, mock_client
+    ):
+        """If schema exposes 'periode', accept caller's 'period' and remap it."""
+        registered_tools = _capture_tools(mock_client)
+
+        mock_client.start_options_flow.side_effect = [
+            {
+                "type": "menu",
+                "flow_id": "flow-1",
+                "step_id": "menu",
+                "menu_options": ["tpi", "finalize"],
+            },
+            {
+                "type": "menu",
+                "flow_id": "flow-2",
+                "step_id": "menu",
+                "menu_options": ["tpi", "finalize"],
+            },
+        ]
+        mock_client.submit_options_flow_step.side_effect = [
+            {
+                "type": "form",
+                "flow_id": "flow-1",
+                "step_id": "tpi",
+                "data_schema": [
+                    {
+                        "name": "auto_regulation_periode_min",
+                        "description": {"suggested_value": 5},
+                    },
+                ],
+            },
+            {
+                "type": "menu",
+                "flow_id": "flow-1",
+                "step_id": "menu",
+                "menu_options": ["tpi", "finalize"],
+            },
+            {"type": "create_entry", "flow_id": "flow-1", "step_id": "finalize"},
+            {
+                "type": "form",
+                "flow_id": "flow-2",
+                "step_id": "tpi",
+                "data_schema": [
+                    {
+                        "name": "auto_regulation_periode_min",
+                        "description": {"suggested_value": 6},
+                    },
+                ],
+            },
+        ]
+
+        result = await registered_tools["ha_set_integration_options"](
+            entry_id="entry-1",
+            step="tpi",
+            options_patch={"auto_regulation_period_min": 6},
+        )
+
+        assert result["success"] is True
+        assert result["applied"] is True
+        assert result["verified"] is True
+        assert result["diff"] == [
+            {
+                "key": "auto_regulation_periode_min",
+                "before": 5,
+                "after": 6,
+            }
+        ]
+
+    @pytest.mark.asyncio
     async def test_set_integration_options_accepts_window_step_keys(self, mock_client):
         """VT window-step adapters should accept supported keys."""
         registered_tools = _capture_tools(mock_client)
@@ -592,5 +740,83 @@ class TestIntegrationOptionsWrite:
                 "key": "window_sensor_entity_id",
                 "before": None,
                 "after": "binary_sensor.office_window_contact",
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_set_integration_options_accepts_valve_regulation_step_keys(
+        self, mock_client
+    ):
+        """VT valve_regulation adapter should accept direct-valve tuning keys."""
+        registered_tools = _capture_tools(mock_client)
+
+        mock_client.start_options_flow.side_effect = [
+            {
+                "type": "menu",
+                "flow_id": "flow-1",
+                "step_id": "menu",
+                "menu_options": ["valve_regulation", "finalize"],
+            },
+            {
+                "type": "menu",
+                "flow_id": "flow-2",
+                "step_id": "menu",
+                "menu_options": ["valve_regulation", "finalize"],
+            },
+        ]
+        mock_client.submit_options_flow_step.side_effect = [
+            {
+                "type": "form",
+                "flow_id": "flow-1",
+                "step_id": "valve_regulation",
+                "data_schema": [
+                    {
+                        "name": "opening_threshold_degree",
+                        "description": {"suggested_value": 1.0},
+                    },
+                    {
+                        "name": "auto_regulation_period_min",
+                        "description": {"suggested_value": 5},
+                    },
+                ],
+            },
+            {
+                "type": "menu",
+                "flow_id": "flow-1",
+                "step_id": "menu",
+                "menu_options": ["valve_regulation", "finalize"],
+            },
+            {"type": "create_entry", "flow_id": "flow-1", "step_id": "finalize"},
+            {
+                "type": "form",
+                "flow_id": "flow-2",
+                "step_id": "valve_regulation",
+                "data_schema": [
+                    {
+                        "name": "opening_threshold_degree",
+                        "description": {"suggested_value": 3},
+                    },
+                    {
+                        "name": "auto_regulation_period_min",
+                        "description": {"suggested_value": 5},
+                    },
+                ],
+            },
+        ]
+
+        result = await registered_tools["ha_set_integration_options"](
+            entry_id="entry-1",
+            step="valve_regulation",
+            options_patch={"opening_threshold_degree": 3},
+        )
+
+        assert result["success"] is True
+        assert result["applied"] is True
+        assert result["verified"] is True
+        assert result["diff"] == [
+            {
+                "key": "opening_threshold_degree",
+                "before": 1.0,
+                "after": 3,
             }
         ]

@@ -58,6 +58,10 @@ INTEGRATION_OPTION_ADAPTERS: dict[str, dict[str, dict[str, Any]]] = {
                 "minimal_deactivation_delay",
                 "tpi_threshold_low",
                 "tpi_threshold_high",
+                # Some VT versions expose valve auto-regulation cadence here.
+                "auto_regulation_dpercent",
+                "auto_regulation_period_min",
+                "auto_regulation_periode_min",
             },
             "verification_method": "flow_suggested",
         },
@@ -118,7 +122,34 @@ INTEGRATION_OPTION_ADAPTERS: dict[str, dict[str, dict[str, Any]]] = {
             },
             "verification_method": "flow_suggested",
         },
+        "valve_regulation": {
+            "allowed_keys": {
+                # Entity selectors for direct valve control wiring.
+                "opening_degree_entities",
+                "closing_degree_entities",
+                # Core valve regulation tuning.
+                "opening_threshold_degree",
+                "min_opening_degrees",
+                "max_opening_degrees",
+                "max_closing_degree",
+                "auto_regulation_dpercent",
+                "auto_regulation_period_min",
+                # Accept common singular/plural variants seen across VT versions.
+                "opening_degree_entity_ids",
+                "closing_degree_entity_ids",
+            },
+            "verification_method": "flow_suggested",
+        },
     }
+}
+
+VT_KEY_ALIASES: dict[tuple[str, str], dict[str, str]] = {
+    ("versatile_thermostat", "tpi"): {
+        # VT has historical typo variants across versions. Accept both and
+        # map to whichever key is actually present in the flow schema.
+        "auto_regulation_period_min": "auto_regulation_periode_min",
+        "auto_regulation_periode_min": "auto_regulation_period_min",
+    },
 }
 
 
@@ -196,6 +227,25 @@ def _normalize_options_patch(
             )
         )
     return deepcopy(options_patch)
+
+
+def _remap_patch_keys_for_schema(
+    patch: dict[str, Any],
+    schema_field_names: set[str],
+    *,
+    domain: str,
+    step: str,
+) -> dict[str, Any]:
+    """Map known integration key aliases to keys available in current schema."""
+    aliases = VT_KEY_ALIASES.get((domain, step), {})
+    if not aliases:
+        return patch
+
+    remapped = deepcopy(patch)
+    for src_key, dst_key in aliases.items():
+        if src_key in remapped and src_key not in schema_field_names and dst_key in schema_field_names:
+            remapped[dst_key] = remapped.pop(src_key)
+    return remapped
 
 
 def _get_adapter(domain: str, step: str) -> dict[str, Any]:
@@ -707,6 +757,12 @@ def register_integration_tools(mcp: Any, client: Any, **kwargs: Any) -> None:
             step_flow = await _open_options_step(client, entry_id, step)
             before = _extract_schema_values(step_flow)
             schema_field_names = _extract_schema_field_names(step_flow)
+            patch = _remap_patch_keys_for_schema(
+                patch,
+                schema_field_names,
+                domain=domain,
+                step=step,
+            )
             _validate_patch_keys(
                 patch,
                 adapter,
